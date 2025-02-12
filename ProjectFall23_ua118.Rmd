@@ -1,0 +1,144 @@
+---
+title: "Project 960:563 Fall23 ua118"
+author: "Udayveer Singh Andotra"
+date: "2023-11-25"
+output: html_document
+---
+
+```{r message=FALSE, warning=FALSE}
+# Libraries used
+library(modeldata)
+library(faraway)
+library(ggplot2)
+library(data.table)
+library(dplyr)
+library(olsrr)
+library(epiDisplay)
+library(StepReg)
+library(caret)
+library(glmnet)
+
+# Reading training data
+fraudTest<-fread("C:\\Users\\usa7k\\OneDrive\\Regression Analysis\\fraudTest.csv")
+fraudVal<-fread("C:\\Users\\usa7k\\OneDrive\\Regression Analysis\\fraudTrain.csv")
+names(fraudTest)
+nrow(fraudTest)
+nrow(fraudVal)
+
+fraudTest$age<-round(as.numeric(difftime("2020-12-31",as.Date(fraudTest$dob), units= "weeks"))/54)
+fraudVal$age<-round(as.numeric(difftime("2019-12-31",as.Date(fraudVal$dob), units= "weeks"))/54)
+
+d1<-fraudTest[is_fraud ==1]# Subset containing only frauds 
+head(table(fraudTest$age, fraudTest$is_fraud)) # Table to see if there is a trend in age with fraud
+
+table(gender=fraudTest$gender,is_fraud=fraudTest$is_fraud)
+100*table(d1$category)/table(fraudTest$category) # Odds of frauds per category
+d2<-d1 %>% group_by(merchant) %>% filter(sum(is_fraud)>=15) # Subset containing frauds with merchant frequency greater than 15
+merchantList<-unique(d2$merchant)
+
+mstate<-setdiff(fraudTest$state,d1$state)
+100*table(append(d1$state,mstate))/table(fraudTest$state) # Odds of frauds per state
+stateL<-mstate # Low Fraud rate state
+stateH<-c("AK", "CT") # High fraud rate state
+
+mjob<-setdiff(fraudTest$job, d1$job)
+head(100*table(append(d1$job,mjob))/table(fraudTest$job))
+# Job types subjected to fraud higher than the rest
+jobH<-c("Accountant, chartered certified", "Buyer, retail", "Commissioning editor", "Conservator, furniture","Designer, television/film set", "Horticultural consultant", "Hydrogeologist", "Investment banker, operational", "Nature conservation officer", "Surveyor, hydrographic", "TEFL teacher", "Television camera operator", "Tour manager", "Visual merchandiser") 
+
+# Variable Creation
+fraudTest$maleF=ifelse(fraudTest$gender == "M", 1, 0)
+fraudTest$popG500=ifelse(fraudTest$city_pop>500,1,0)
+fraudTest$catShop_net=ifelse(fraudTest$category=="shopping_net",1,0)
+fraudTest$catMisc_net=ifelse(fraudTest$category=="misc_net",1,0)
+fraudTest$merch=ifelse(fraudTest$merchant == merchantList,1,0)
+fraudTest$stateHF=ifelse(fraudTest$state == stateH,1,0)
+fraudTest$stateLF=ifelse(fraudTest$state == stateL,1,0)
+fraudTest$jobHF=ifelse(fraudTest$job == jobH,1,0)
+fraudTest$ageHF=ifelse(fraudTest$age > 60,1,0)
+
+fraudVal$maleF=ifelse(fraudVal$gender == "M", 1, 0)
+fraudVal$popG500=ifelse(fraudVal$city_pop>500,1,0)
+fraudVal$catShop_net=ifelse(fraudVal$category=="shopping_net",1,0)
+fraudVal$catMisc_net=ifelse(fraudVal$category=="misc_net",1,0)
+fraudVal$merch=ifelse(fraudVal$merchant == merchantList,1,0)
+fraudVal$stateHF=ifelse(fraudVal$state == stateH,1,0)
+fraudVal$stateLF=ifelse(fraudVal$state == stateL,1,0)
+fraudVal$jobHF=ifelse(fraudVal$job == jobH,1,0)
+fraudVal$ageHF=ifelse(fraudVal$age > 60,1,0)
+
+# Contingency Tables
+table(popG500=fraudTest$popG500,is_fraud=fraudTest$is_fraud)
+table(catShop_net=fraudTest$catShop_net,is_fraud=fraudTest$is_fraud)
+table(catMisc_net=fraudTest$catMisc_net,is_fraud=fraudTest$is_fraud)
+table(merch=fraudTest$merch,is_fraud=fraudTest$is_fraud)
+table(stateHF=fraudTest$stateHF,is_fraud=fraudTest$is_fraud)
+table(stateLF=fraudTest$stateLF,is_fraud=fraudTest$is_fraud)
+table(jobHF=fraudTest$jobHF,is_fraud=fraudTest$is_fraud)
+table(ageHF=fraudTest$ageHF,is_fraud=fraudTest$is_fraud)
+
+# Full Linear Model
+lmod0<-lm(is_fraud ~ city_pop + amt + age + maleF + popG500 + catShop_net + catMisc_net + merch + stateHF + stateLF + jobHF + ageHF, fraudTest)
+summary(lmod0)
+
+# Null Model
+mod00<-glm(is_fraud ~ 1, family = binomial(logit), data=fraudTest)
+# Full Logistic Model
+mod0<-glm(is_fraud ~ city_pop + amt + age + maleF + popG500 + catShop_net + catMisc_net + merch + stateHF + stateLF + jobHF + ageHF, family = binomial(logit), data=fraudTest)
+summary(mod0)
+lr.stat<-lrtest(mod00,mod0)
+lr.stat
+logistic.display(mod0)
+
+# Step wise Logistic
+mod01<-stepwiseLogit(is_fraud ~ city_pop + amt + age + maleF + popG500 + catShop_net + catMisc_net + merch + stateHF + stateLF + jobHF + ageHF, data=fraudTest,selection="backward", select="SL", sigMethod = "LRT", sle=0.05,sls=0.05)
+mod01
+
+y<-fraudTest$is_fraud # Response
+x<-data.matrix(fraudTest[,c('city_pop','amt','age','maleF','popG500','catShop_net','catMisc_net','merch','stateHF','stateLF','jobHF', 'ageHF')]) # Regressors
+
+# Lasso Regression for variable selection
+cv_model <- cv.glmnet(x, y, nfolds = 10, alpha=1)
+
+# find optimal lambda value that minimizes test MSE
+best_lambda <- cv_model$lambda.min
+best_lambda
+
+# produce plot of test MSE by lambda value
+plot(cv_model) 
+best_model <- glmnet(x, y, alpha = 1, lambda = best_lambda, family = binomial(logit))
+coef(best_model)
+
+# Logistic model using selected variables
+mod1<-glm(is_fraud ~ city_pop + amt + age + popG500 + catShop_net + catMisc_net + stateHF + stateLF + jobHF, family = binomial(logit), data=fraudTest)
+summary(mod1)
+
+# correlation matrix
+round(cor(subset(x,select=-c(maleF,merch,ageHF))),2)
+
+# Cross Validation to refine model coefficients
+# define training control
+train_control <- trainControl(method = "cv", number = 10)
+
+# train the model on training set
+mod2 <- train(is_fraud ~ city_pop + amt + age + popG500 + catShop_net + catMisc_net + stateHF + jobHF, data = fraudTest,            trControl = train_control, method = "glm", family=binomial(logit))
+
+print(mod2)
+# print cv scores
+summary(mod2)
+
+# p-value for model performance
+1-pchisq(summary(mod2)$deviance, summary(mod2)$df[1]-1)
+
+fraudTest$pred_val<-fitted.values(mod2)
+fraudTest$pred_fraud<-ifelse(fitted.values(mod2)>0.5,1,0)
+fraudTest$flag=ifelse(fraudTest$pred_fraud== fraudTest$is_fraud,1,0)
+print("Model Accuracy % :")
+100*mean(fraudTest$flag)
+
+fraudVal$pred_val=predict(mod2, newdata = fraudVal)
+fraudVal$pred_fraud<-ifelse(fraudVal$pred_val>0.5,1,0)
+fraudVal$flag=ifelse(fraudVal$pred_fraud== fraudVal$is_fraud,1,0)
+print("Model Accuracy % :")
+100*mean(fraudVal$flag)
+```
