@@ -25,7 +25,6 @@ The repository includes the project report (PDF), R Markdown code for reproducti
 - [Methods](#methods)
 - [Results](#results)
 - [References](#references)
-- [License](#license)
 
 ## Files
 
